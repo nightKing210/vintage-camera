@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Techniscope 35 — Arriflex IIC / Mitchell BNC</title>
+<style>
+:root{--bg:#1a120a;--panel:#2a1d12;--ink:#ecd9b0;--dim:#9c8761;--red:#b3361d;--line:#4a3722;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root{color-scheme:dark}}
+:root:not([data-theme="light"]){--bg:#1a120a}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Courier New",Courier,monospace;min-height:100vh}
+main{max-width:980px;margin:0 auto;padding:14px}
+h1{font:700 22px/1.2 Georgia,"Times New Roman",serif;margin:4px 0 2px;letter-spacing:.02em}
+p.sub{margin:0 0 12px;color:var(--dim);font-size:13px}
+.gate{position:relative;background:#000;border:6px solid var(--panel);outline:1px solid var(--line);aspect-ratio:2.35/1;overflow:hidden}
+canvas{width:100%;height:100%;display:block}
+.hud{position:absolute;left:10px;bottom:8px;font-size:12px;color:#e8d9b0;opacity:.8;text-shadow:0 0 4px #000}
+.rec{position:absolute;right:12px;top:10px;font-size:13px;color:#ff5a3c;display:none}
+.rec.on{display:block}
+.row{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0;align-items:center}
+button{background:var(--panel);color:var(--ink);border:1px solid var(--line);padding:11px 16px;font:inherit;cursor:pointer;border-radius:3px}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+button.rec-btn{background:var(--red);border-color:var(--red);color:#fff;font-weight:700}
+.ctl{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px 18px;background:var(--panel);padding:12px;border:1px solid var(--line)}
+label{display:flex;flex-direction:column;font-size:12px;color:var(--dim);gap:4px}
+label b{color:var(--ink);font-weight:400}
+input[type=range]{width:100%}
+#msg{font-size:13px;color:#ffb38a;min-height:18px}
+.notes{font-size:12px;color:var(--dim);line-height:1.5;margin-top:12px}
+video{display:none}
+a.dl{color:var(--ink)}
+</style>
+</head>
+<body>
+<main>
+<h1>Techniscope 35 — Arriflex 35 IIC / Mitchell BNC</h1>
+<p class="sub">2-perf 35mm, 2.35:1. Live camera and mono optical-track sound, rendered in your browser.</p>
+
+<div class="gate">
+  <canvas id="cv" width="1880" height="800"></canvas>
+  <div class="rec" id="rec">● REC <span id="tc">00:00</span></div>
+  <div class="hud" id="hud">24 fps · 2-perf · 1:2.35</div>
+</div>
+
+<div class="row">
+  <button id="start">Start camera + mic</button>
+  <button id="rec-btn" class="rec-btn" disabled>Roll</button>
+  <button id="flip" disabled>Flip camera</button>
+  <select id="body" aria-label="Camera body">
+    <option value="arri">Arriflex 35 IIC (handheld, flutter)</option>
+    <option value="mitch">Mitchell BNC (tripod, steady)</option>
+  </select>
+  <span id="msg"></span>
+</div>
+
+<div class="ctl">
+  <label>Grain <b id="v_grain"></b><input id="grain" type="range" min="0" max="100" value="65"></label>
+  <label>Gate weave <b id="v_weave"></b><input id="weave" type="range" min="0" max="100" value="35"></label>
+  <label>Halation <b id="v_hal"></b><input id="hal" type="range" min="0" max="100" value="45"></label>
+  <label>Dust and scratches <b id="v_dust"></b><input id="dust" type="range" min="0" max="100" value="40"></label>
+  <label>Fade / print age <b id="v_fade"></b><input id="fade" type="range" min="0" max="100" value="45"></label>
+  <label>Track hiss <b id="v_hiss"></b><input id="hiss" type="range" min="0" max="100" value="35"></label>
+  <label>Optical bandwidth <b id="v_bw"></b><input id="bw" type="range" min="0" max="100" value="55"></label>
+  <label>Camera whirr <b id="v_whirr"></b><input id="whirr" type="range" min="0" max="100" value="0"></label>
+</div>
+
+<p class="notes">
+Look: warm Eastmancolor-style palette, crushed shadows, soft highlights with red halation, 24 fps shutter judder, grain, gate weave and lamp flicker. 
+Sound: the film's dialogue was mostly recorded after shooting and printed to a mono optical track, so the mic chain is band-limited (about 90 Hz–7 kHz), compressed, mildly saturated, with tape and track hiss. 
+This is a faithful emulation, not the original lens, stock or microphone; a real Techniscope negative has qualities no filter fully copies.
+If the camera does not start inside this preview, open the page in its own browser tab and allow camera and microphone access.
+</p>
+</main>
+
+<script>
+(function(){
+const $=id=>document.getElementById(id);
+const cv=$('cv'),ctx=cv.getContext('2d');
+const W=cv.width,H=cv.height;
+const vid=document.createElement('video');vid.playsInline=true;vid.muted=true;
+const buf=document.createElement('canvas');buf.width=W;buf.height=H;const bx=buf.getContext('2d');
+const hal=document.createElement('canvas');hal.width=W/4;hal.height=H/4;const hx=hal.getContext('2d');
+const gr=document.createElement('canvas');gr.width=256;gr.height=256;const gx=gr.getContext('2d');
+const grains=[];
+for(let n=0;n<6;n++){const d=gx.createImageData(256,256);for(let i=0;i<d.data.length;i+=4){const v=128+(Math.random()+Math.random()+Math.random()-1.5)*110;d.data[i]=d.data[i+1]=d.data[i+2]=v;d.data[i+3]=255}
+const c=document.createElement('canvas');c.width=c.height=256;c.getContext('2d').putImageData(d,0,0);grains.push(c)}
+const P={};
+['grain','weave','hal','dust','fade','hiss','bw','whirr'].forEach(k=>{
+  const el=$(k);P[k]=+el.value/100;$('v_'+k).textContent=el.value;
+  el.addEventListener('input',()=>{P[k]=+el.value/100;$('v_'+k).textContent=el.value;if(k==='hiss'||k==='bw'||k==='whirr')applyAudio()});
+});
+let facing='environment',stream=null,running=false,t0=0;
+let audioCtx,micSrc,dest,hissGain,lp,hp,whirrGain,whirrOsc,whirrNoise;
+let rec=null,chunks=[],recStart=0;
+
+function applyAudio(){
+  if(!audioCtx)return;
+  const bw=P.bw; // 0 = narrow telephone-ish, 1 = fuller
+  hp.frequency.value=70+(1-bw)*130;
+  lp.frequency.value=4500+bw*3500;
+  hissGain.gain.value=P.hiss*0.035;
+  whirrGain.gain.value=P.whirr*0.05;
+}
+function buildAudio(s){
+  audioCtx=new (window.AudioContext||window.webkitAudioContext)();
+  micSrc=audioCtx.createMediaStreamSource(s);
+  hp=audioCtx.createBiquadFilter();hp.type='highpass';hp.Q.value=0.9;
+  lp=audioCtx.createBiquadFilter();lp.type='lowpass';lp.Q.value=0.8;
+  // presence bump typical of 1960s dynamic/ribbon-era dubbing chain
+  const pres=audioCtx.createBiquadFilter();pres.type='peaking';pres.frequency.value=2800;pres.gain.value=4;pres.Q.value=1;
+  const comp=audioCtx.createDynamicsCompressor();comp.threshold.value=-30;comp.ratio.value=6;comp.attack.value=0.004;comp.release.value=0.2;
+  const sat=audioCtx.createWaveShaper();const k=new Float32Array(1024);
+  for(let i=0;i<1024;i++){const x=i/512-1;k[i]=Math.tanh(x*2.2)/Math.tanh(2.2)}
+  sat.curve=k;
+  const mono=audioCtx.createGain();mono.channelCount=1;mono.channelCountMode='explicit';
+  // optical track hiss
+  const nb=audioCtx.createBuffer(1,audioCtx.sampleRate*2,audioCtx.sampleRate);
+  const nd=nb.getChannelData(0);for(let i=0;i<nd.length;i++)nd[i]=Math.random()*2-1;
+  const ns=audioCtx.createBufferSource();ns.buffer=nb;ns.loop=true;
+  const hf=audioCtx.createBiquadFilter();hf.type='bandpass';hf.frequency.value=3500;hf.Q.value=0.4;
+  hissGain=audioCtx.createGain();
+  ns.connect(hf);hf.connect(hissGain);ns.start();
+  // projector/camera whirr: 24 fps mechanical drone with harmonics
+  whirrGain=audioCtx.createGain();
+  [48,96,144].forEach((f,i)=>{const o=audioCtx.createOscillator();o.type=i?'sine':'sawtooth';o.frequency.value=f;const g=audioCtx.createGain();g.gain.value=1/(i+1);o.connect(g);g.connect(whirrGain);o.start()});
+  dest=audioCtx.createMediaStreamDestination();
+  micSrc.connect(hp);hp.connect(pres);pres.connect(comp);comp.connect(sat);sat.connect(lp);lp.connect(mono);
+  mono.connect(dest);hissGain.connect(dest);whirrGain.connect(dest);
+  applyAudio();
+}
+
+async function start(){
+  $('msg').textContent='';
+  try{
+    if(stream)stream.getTracks().forEach(t=>t.stop());
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:facing,width:{ideal:1920},height:{ideal:1080}},audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}});
+  }catch(e){
+    try{stream=await navigator.mediaDevices.getUserMedia({video:true,audio:false});$('msg').textContent='Mic unavailable: video only.'}
+    catch(e2){$('msg').textContent='Camera blocked. Allow access, or open this page in its own tab.';return}
+  }
+  vid.srcObject=stream;await vid.play();
+  if(stream.getAudioTracks().length&&!audioCtx)buildAudio(new MediaStream(stream.getAudioTracks()));
+  $('rec-btn').disabled=false;$('flip').disabled=false;
+  if(!running){running=true;t0=performance.now();last=0;requestAnimationFrame(frame)}
+}
+
+let last=0,wx=0,wy=0,flick=1,jx=0,jy=0,frameN=0;
+function frame(now){
+  requestAnimationFrame(frame);
+  // 24 fps shutter cadence
+  if(now-last<1000/24-1)return;last=now;frameN++;
+  const body=$('body').value;
+  const hh=body==='arri'?1:0.25; // handheld vs tripod
+  // gate weave: slow drift + small jitter
+  wx+= (Math.random()-.5)*P.weave*1.4;wy+=(Math.random()-.5)*P.weave*1.0;
+  wx*=.92;wy*=.92;
+  jx=(Math.random()-.5)*P.weave*2.2*hh;jy=(Math.random()-.5)*P.weave*2.8;
+  const t=now/1000;
+  const sway=body==='arri'?{x:Math.sin(t*1.3)*5+Math.sin(t*3.1)*2,y:Math.cos(t*1.7)*3}:{x:0,y:0};
+  flick=1+(Math.random()-.5)*0.07*(0.5+P.fade);
+  // crop video into 2.35:1 frame (cover)
+  const vw=vid.videoWidth||1280,vh=vid.videoHeight||720;
+  const s=Math.max(W/vw,H/vh)*1.04;
+  const dw=vw*s,dh=vh*s;
+  bx.save();
+  bx.filter=`contrast(${1.22+P.fade*.1}) saturate(${1.05+P.fade*.05}) sepia(${.14+P.fade*.12}) brightness(${flick*1.0})`;
+  bx.drawImage(vid,(W-dw)/2+wx+jx+sway.x,(H-dh)/2+wy+jy+sway.y,dw,dh);
+  bx.restore();
+  // color grade: warm highlights, teal-green shadows, lifted/crushed blacks
+  bx.globalCompositeOperation='soft-light';
+  bx.fillStyle=`rgba(255,170,70,${.28+P.fade*.12})`;bx.fillRect(0,0,W,H);
+  bx.globalCompositeOperation='multiply';
+  bx.fillStyle=`rgba(236,222,190,1)`;bx.fillRect(0,0,W,H);
+  bx.globalCompositeOperation='screen';
+  bx.fillStyle=`rgba(30,26,16,${.05+P.fade*.18})`;bx.fillRect(0,0,W,H);
+  bx.globalCompositeOperation='source-over';
+  // halation: blur highlights back in with red-orange tint
+  if(P.hal>0){
+    hx.filter='contrast(1.8) brightness(.8) blur(5px)';
+    hx.drawImage(buf,0,0,W/4,H/4);hx.filter='none';
+    bx.globalCompositeOperation='screen';bx.globalAlpha=P.hal*.55;
+    bx.filter='blur(10px) sepia(1) saturate(4) hue-rotate(-18deg)';
+    bx.drawImage(hal,0,0,W,H);
+    bx.filter='none';bx.globalAlpha=1;bx.globalCompositeOperation='source-over';
+  }
+  // soften slightly like vintage 35mm optics, then output
+  ctx.filter='blur(0.6px)';ctx.drawImage(buf,0,0);ctx.filter='none';
+  // grain (Techniscope = half frame, so coarser)
+  if(P.grain>0){
+    const g=grains[frameN%grains.length];
+    ctx.globalCompositeOperation='overlay';ctx.globalAlpha=P.grain*.75;
+    const ox=(Math.random()*256)|0,oy=(Math.random()*256)|0;
+    for(let x=-ox;x<W;x+=256)for(let y=-oy;y<H;y+=256)ctx.drawImage(g,x,y,256,256);
+    ctx.globalAlpha=1;ctx.globalCompositeOperation='source-over';
+  }
+  // vignette
+  const vg=ctx.createRadialGradient(W/2,H/2,H*.35,W/2,H/2,W*.62);
+  vg.addColorStop(0,'rgba(0,0,0,0)');vg.addColorStop(1,`rgba(10,5,0,${.5+P.fade*.2})`);
+  ctx.fillStyle=vg;ctx.fillRect(0,0,W,H);
+  // dust, hairs, vertical scratches
+  if(P.dust>0){
+    ctx.fillStyle='rgba(235,225,200,.8)';
+    const n=Math.floor(P.dust*10*Math.random());
+    for(let i=0;i<n;i++){const r=Math.random()*2.5+.5;ctx.beginPath();ctx.arc(Math.random()*W,Math.random()*H,r,0,7);ctx.fill()}
+    if(Math.random()<P.dust*.22){const x=Math.random()*W;ctx.strokeStyle=`rgba(240,230,205,${.15+Math.random()*.3})`;ctx.lineWidth=1+Math.random();ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x+(Math.random()-.5)*6,H);ctx.stroke()}
+    if(Math.random()<P.dust*.06){ctx.strokeStyle='rgba(10,8,5,.7)';ctx.lineWidth=1.2;ctx.beginPath();let x=Math.random()*W,y=Math.random()*H;ctx.moveTo(x,y);for(let i=0;i<6;i++){x+=(Math.random()-.4)*14;y+=(Math.random()-.5)*10;ctx.lineTo(x,y)}ctx.stroke()}
+  }
+  if(rec&&rec.state==='recording'){const s=((now-recStart)/1000)|0;$('tc').textContent=String((s/60)|0).padStart(2,'0')+':'+String(s%60).padStart(2,'0')}
+}
+
+function toggleRec(){
+  if(rec&&rec.state==='recording'){rec.stop();return}
+  const vs=cv.captureStream(24);
+  const tracks=[...vs.getVideoTracks()];
+  if(dest)tracks.push(...dest.stream.getAudioTracks());
+  const ms=new MediaStream(tracks);
+  const types=['video/mp4;codecs=avc1','video/webm;codecs=vp9,opus','video/webm'];
+  const mt=types.find(t=>window.MediaRecorder&&MediaRecorder.isTypeSupported(t))||'';
+  try{rec=new MediaRecorder(ms,mt?{mimeType:mt,videoBitsPerSecond:8e6}:{})}catch(e){$('msg').textContent='Recording is not supported in this browser.';return}
+  chunks=[];
+  rec.ondataavailable=e=>e.data.size&&chunks.push(e.data);
+  rec.onstop=()=>{
+    $('rec').classList.remove('on');$('rec-btn').textContent='Roll';
+    const type=rec.mimeType||'video/webm';
+    const url=URL.createObjectURL(new Blob(chunks,{type}));
+    const a=document.createElement('a');a.href=url;a.download='techniscope-take.'+(type.includes('mp4')?'mp4':'webm');
+    a.className='dl';a.textContent='Save take';
+    $('msg').textContent='';$('msg').appendChild(a);
+  };
+  if(audioCtx&&audioCtx.state==='suspended')audioCtx.resume();
+  rec.start(1000);recStart=performance.now();$('tc').textContent='00:00';
+  $('rec').classList.add('on');$('rec-btn').textContent='Cut';$('msg').textContent='';
+}
+$('start').onclick=start;
+$('rec-btn').onclick=toggleRec;
+$('flip').onclick=()=>{facing=facing==='user'?'environment':'user';start()};
+$('body').onchange=()=>{$('hud').textContent='24 fps · 2-perf · 1:2.35 · '+($('body').value==='arri'?'Arriflex 35 IIC':'Mitchell BNC')};
+$('body').onchange();
+// idle preview so the gate is not blank
+(function idle(){if(running)return;ctx.fillStyle='#000';ctx.fillRect(0,0,W,H);ctx.fillStyle='#ecd9b0';ctx.font='42px Georgia,serif';ctx.textAlign='center';ctx.fillText('Press "Start camera + mic"',W/2,H/2)})();
+})();
+</script>
+</body>
+</html>
